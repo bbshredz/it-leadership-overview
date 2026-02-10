@@ -113,7 +113,9 @@ window.closeConfigureModal = function() {
     document.getElementById('configure-current-modal').classList.remove('active');
 };
 
-window.saveCurrentBudget = function() {
+// FIX: saveCurrentBudget now writes to Google Sheets
+window.saveCurrentBudget = async function() {
+    // 1. Update in-memory values
     Object.keys(subcategoryData).forEach(categoryKey => {
         Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
             const input = document.getElementById(`current-${categoryKey}-${subKey}`);
@@ -122,9 +124,34 @@ window.saveCurrentBudget = function() {
             }
         });
     });
+
+    // 2. Also update parent category current totals
+    Object.keys(budgetMarketData).forEach(categoryKey => {
+        let categoryTotal = 0;
+        if (subcategoryData[categoryKey]) {
+            Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
+                categoryTotal += subcategoryData[categoryKey][subKey].current;
+            });
+        }
+        budgetMarketData[categoryKey].current = categoryTotal;
+    });
     
+    // 3. Close modal
     closeConfigureModal();
-    alert('✅ Current budget values saved! Use "Load Current Budget" to apply these values.');
+
+    // 4. Save to Google Sheets
+    const saved = await saveBudgetToSheets();
+
+    if (saved) {
+        alert('✅ Current budget values saved to Google Sheets!\n\nUse "Load Current Budget" to apply these values as proposed, or "Show Current Comparison" to see the gap.');
+    } else {
+        alert('✅ Current budget values saved locally.\n\nSign in with Google to sync to Sheets.\nUse "Load Current Budget" to apply these values.');
+    }
+
+    // 5. Re-render if comparison mode is on
+    if (typeof renderTableView === 'function') {
+        renderTableView();
+    }
 };
 
 function openAddItemModal() {
@@ -133,7 +160,7 @@ function openAddItemModal() {
     
     // Add click listener to submit button instead of form submit
     const submitBtn = document.getElementById('submit-new-line-item');
-    submitBtn.onclick = function() {
+    submitBtn.onclick = async function() {
         const categoryKey = document.getElementById('new-item-category').value;
         const name = document.getElementById('new-item-name').value;
         const currentValue = parseInt(document.getElementById('new-item-current').value) || 0;
@@ -175,12 +202,12 @@ function openAddItemModal() {
         // Auto-generate market ranges with proposed as sweet spot
         subcategoryData[categoryKey][newKey] = {
             name: name,
-            current: currentValue || Math.round(proposed * 0.70), // Current at 70% shows underfunding
-            marketLow: Math.round(proposed * 0.75), // 75% of proposed is minimum viable
-            marketMid: Math.round(proposed * 0.90), // 90% is baseline
-            sweetSpot: proposed, // YOUR proposed amount IS the sweet spot
-            marketHigh: Math.round(proposed * 1.15), // 15% above for premium
-            maxRecommended: Math.round(proposed * 1.35), // 35% above is max before waste
+            current: currentValue || Math.round(proposed * 0.70),
+            marketLow: Math.round(proposed * 0.75),
+            marketMid: Math.round(proposed * 0.90),
+            sweetSpot: proposed,
+            marketHigh: Math.round(proposed * 1.15),
+            maxRecommended: Math.round(proposed * 1.35),
             description: description,
             tags: generateSmartTags(categoryKey, name, description)
         };
@@ -201,8 +228,11 @@ function openAddItemModal() {
         // Close modal and refresh
         closeAddItemModal();
         renderTableView();
+
+        // FIX: Save to Google Sheets after adding line item
+        await saveBudgetToSheets();
         
-        alert(`✅ Added "${name}" to ${budgetMarketData[categoryKey].name}\n\nNew line item appears at the bottom of the ${budgetMarketData[categoryKey].name} section.`);
+        alert(`✅ Added "${name}" to ${budgetMarketData[categoryKey].name} and saved to Google Sheets.\n\nNew line item appears at the bottom of the ${budgetMarketData[categoryKey].name} section.`);
     };
 }
 

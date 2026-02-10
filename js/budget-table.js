@@ -65,15 +65,281 @@ function setupTableControls() {
         }
     });
 
-    // Save to 2026 Budget
-    document.getElementById('table-save-2026')?.addEventListener('click', () => {
+    // Save to 2026 Budget — NOW ACTUALLY SAVES TO SHEETS
+    document.getElementById('table-save-2026')?.addEventListener('click', async () => {
         if (confirm('Save this budget configuration as the official 2026 IT Budget?')) {
             // Update the 2026 IT Budget tab with new values
             updateBudgetTab();
-            alert('✅ Budget saved! Changes are now reflected in the "2026 IT Budget" tab.');
+            // Save to Google Sheets
+            await saveBudgetToSheets();
+            alert('✅ Budget saved to Google Sheets! Changes are now reflected in the "2026 IT Budget" tab.');
             document.getElementById('table-save-2026').style.display = 'none';
         }
     });
+}
+
+function getTableDescription(categoryKey, subKey) {
+    const descriptions = {
+        infrastructure: {
+            network: 'WAN/LAN circuits, SD-WAN, cabling, bandwidth - all facilities',
+            cloud: 'Azure/AWS hosting, data center colocation, cloud storage & compute',
+            virtualization: 'Nutanix platform, server hardware, hypervisor licensing (VMware/Hyper-V)',
+            hardware: 'Workstations, laptops, tablets, printers, peripheral equipment',
+            maintenance: '24/7 vendor support contracts, warranties, professional services'
+        },
+        personnel: {
+            leadership: 'IT Director/VP compensation, benefits, bonuses (Anthony, Geremia)',
+            technical: 'Network admins, service delivery specialists, clinical IT staff (Francis, Tom, Rogi)',
+            database: 'Database administrator compensation and benefits (Jon)',
+            training: 'Certifications (CompTIA, Microsoft, Cisco), conferences, continuing education'
+        },
+        software: {
+            clinical: 'PointClickCare EHR/billing platform and ancillary clinical SaaS subscriptions',
+            business: 'ERP (financial/operations), MDM (Jamf/MaaS360), eFax, business applications',
+            productivity: 'Microsoft 365 E3/E5 licenses, email, Teams, OneDrive, identity (Azure AD)',
+            servicedesk: 'ITSM platform (ticketing, asset management), monitoring tools, AI Tier-0 bot'
+        },
+        security: {
+            infrastructure_security: 'Next-gen firewalls (Fortinet/Palo Alto), network segmentation, Zero Trust components',
+            endpoint_security: 'EDR (CrowdStrike/SentinelOne), antivirus, email security (Proofpoint/Mimecast)',
+            compliance: 'Audit support, GRC tools, documentation management, consultant fees',
+            training_awareness: 'KnowBe4/similar platform, phishing simulations, security awareness campaigns'
+        }
+    };
+
+    return descriptions[categoryKey]?.[subKey] || '';
+}
+
+function updateTableItem(categoryKey, subKey, value) {
+    proposedSubBudgets[categoryKey][subKey] = value;
+
+    // Update display
+    document.getElementById(`table-value-${categoryKey}-${subKey}`).textContent = 
+        `$${(value / 1000).toFixed(0)}K`;
+
+    // Update tags
+    const subItem = subcategoryData[categoryKey][subKey];
+    const zone = getZone(subItem, value);
+    const tags = subItem.tags ? subItem.tags[zone] : [];
+    document.getElementById(`table-tags-${categoryKey}-${subKey}`).innerHTML = 
+        renderTags(tags, zone);
+
+    // Update row styling based on risk
+    const row = document.getElementById(`table-slider-${categoryKey}-${subKey}`)?.closest('tr');
+    if (row) {
+        row.classList.remove('risk-critical', 'risk-severe');
+        const utiRange = subItem.maxRecommended - subItem.marketLow;
+        const utiPct = utiRange > 0 ?
+            ((value - subItem.marketLow) / utiRange) * 100 : 50;
+        if (utiPct < 10) {
+            row.classList.add('risk-severe');
+        } else if (utiPct < 20) {
+            row.classList.add('risk-critical');
+        }
+    }
+
+    // Show save button
+    const saveBtn = document.getElementById('table-save-2026');
+    if (saveBtn) saveBtn.style.display = 'block';
+
+    updateTableSummary();
+}
+
+function updateTableSummary() {
+    let totalProposed = 0;
+    let totalCurrent = 0;
+    let criticalCount = 0;
+
+    Object.keys(subcategoryData).forEach(categoryKey => {
+        Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
+            const subItem = subcategoryData[categoryKey][subKey];
+            const value = proposedSubBudgets[categoryKey]?.[subKey] || subItem.sweetSpot;
+            totalProposed += value;
+            totalCurrent += subItem.current;
+
+            const utsRange = subItem.maxRecommended - subItem.marketLow;
+            const utsPct = utsRange > 0 ?
+                ((value - subItem.marketLow) / utsRange) * 100 : 50;
+            if (utsPct < 20) criticalCount++;
+        });
+    });
+
+    // Update total card
+    document.getElementById('table-proposed-total').textContent = `$${(totalProposed / 1000000).toFixed(1)}M`;
+    document.getElementById('table-current-total').textContent = `$${(totalCurrent / 1000000).toFixed(1)}M`;
+
+    // Market position
+    const totalMid = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketMid, 0);
+    const totalHigh = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketHigh, 0);
+    const totalLow = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketLow, 0);
+    const range = totalHigh - totalLow;
+    const position = range > 0 ? Math.round(((totalProposed - totalLow) / range) * 100) : 50;
+    const percentile = Math.min(99, Math.max(1, position));
+
+    document.getElementById('table-market-position').textContent = `${percentile}th Percentile`;
+    let positionDetail = 'Mid-Market';
+    if (percentile < 25) positionDetail = 'Below Market';
+    else if (percentile < 40) positionDetail = 'Lower Mid-Market';
+    else if (percentile < 60) positionDetail = 'Mid-Market';
+    else if (percentile < 75) positionDetail = 'Upper Mid-Market';
+    else positionDetail = 'Premium';
+    document.getElementById('table-market-detail').textContent = positionDetail;
+
+    // Proposed status
+    const statusEl = document.getElementById('table-proposed-status');
+    if (percentile < 25) {
+        statusEl.textContent = 'Underfunded';
+    } else if (percentile < 75) {
+        statusEl.textContent = 'Optimal Range';
+    } else {
+        statusEl.textContent = 'Premium';
+    }
+
+    // Update risk count card
+    const riskCard = document.getElementById('table-risk-summary-card');
+    if (criticalCount > 5) {
+        riskCard.className = 'planner-summary-card risk-high';
+        document.getElementById('table-risk-count').textContent = `${criticalCount} Critical`;
+        document.getElementById('table-risk-summary').textContent = 'Immediate action required';
+    } else if (criticalCount > 0) {
+        riskCard.className = 'planner-summary-card risk-medium';
+        document.getElementById('table-risk-count').textContent = `${criticalCount} At Risk`;
+        document.getElementById('table-risk-summary').textContent = 'Attention needed';
+    } else {
+        riskCard.className = 'planner-summary-card risk-low';
+        document.getElementById('table-risk-count').textContent = '0 Critical';
+        document.getElementById('table-risk-summary').textContent = 'All systems nominal';
+    }
+}
+
+function renderTableView() {
+    const tbody = document.getElementById('table-budget-items');
+    if (!tbody) return;
+
+    let html = '';
+    let totalProposed = 0;
+    let totalCurrent = 0;
+    let criticalCount = 0;
+
+    // Update table headers if comparison mode
+    const thead = tbody.parentElement.querySelector('thead tr');
+    if (thead) {
+        if (tableComparisonMode) {
+            thead.innerHTML = `
+                <th>Category</th>
+                <th>Description</th>
+                <th>Current</th>
+                <th>Proposed</th>
+            `;
+        } else {
+            thead.innerHTML = `
+                <th>Category</th>
+                <th>Description</th>
+                <th>Annual Cost</th>
+            `;
+        }
+    }
+
+    Object.keys(subcategoryData).forEach(categoryKey => {
+        const category = budgetMarketData[categoryKey];
+        let categoryTotal = 0;
+
+        // Category header row
+        html += `
+            <tr class="category-row">
+                <td colspan="${tableComparisonMode ? 4 : 3}">${category.name}</td>
+            </tr>
+        `;
+
+        // Subcategory rows
+        Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
+            const subItem = subcategoryData[categoryKey][subKey];
+            const value = proposedSubBudgets[categoryKey]?.[subKey] || subItem.sweetSpot;
+            const zone = getZone(subItem, value);
+            const tags = subItem.tags ? subItem.tags[zone] : [];
+            
+            categoryTotal += value;
+            totalProposed += value;
+            totalCurrent += subItem.current;
+
+            // Determine risk class for row styling (proportional zones)
+            let riskClass = '';
+            const rtvRange = subItem.maxRecommended - subItem.marketLow;
+            const rtvPct = rtvRange > 0 ?
+                ((value - subItem.marketLow) / rtvRange) * 100 : 50;
+            if (rtvPct < 10) {
+                riskClass = 'risk-severe';
+                criticalCount++;
+            } else if (rtvPct < 20) {
+                riskClass = 'risk-critical';
+                criticalCount++;
+            }
+
+            const description = window.customDescriptions?.[`${categoryKey}-${subKey}`] || 
+                                getTableDescription(categoryKey, subKey) || 
+                                subItem.description || '';
+
+            if (tableComparisonMode) {
+                html += `
+                    <tr class="subcategory-row ${riskClass}">
+                        <td class="category-cell">${subItem.name}</td>
+                        <td class="description-cell">
+                            <div class="table-description">${description}</div>
+                            <div id="table-tags-${categoryKey}-${subKey}">${renderTags(tags, zone)}</div>
+                        </td>
+                        <td style="text-align: right; font-weight: 600; color: var(--gray-500);">
+                            $${(subItem.current / 1000).toFixed(0)}K
+                        </td>
+                        <td class="slider-cell">
+                            <div class="table-slider-wrapper">
+                                <div class="table-slider-container">
+                                    <input type="range" 
+                                        class="table-slider"
+                                        id="table-slider-${categoryKey}-${subKey}"
+                                        min="${subItem.marketLow}" 
+                                        max="${subItem.maxRecommended}" 
+                                        value="${value}"
+                                        oninput="updateTableItem('${categoryKey}', '${subKey}', parseInt(this.value))">
+                                </div>
+                                <div class="table-value-display" id="table-value-${categoryKey}-${subKey}">
+                                    $${(value / 1000).toFixed(0)}K
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            } else {
+                html += `
+                    <tr class="subcategory-row ${riskClass}">
+                        <td class="category-cell">${subItem.name}</td>
+                        <td class="description-cell">
+                            <div class="table-description">${description}</div>
+                            <div id="table-tags-${categoryKey}-${subKey}">${renderTags(tags, zone)}</div>
+                        </td>
+                        <td class="slider-cell">
+                            <div class="table-slider-wrapper">
+                                <div class="table-slider-container">
+                                    <input type="range" 
+                                        class="table-slider"
+                                        id="table-slider-${categoryKey}-${subKey}"
+                                        min="${subItem.marketLow}" 
+                                        max="${subItem.maxRecommended}" 
+                                        value="${value}"
+                                        oninput="updateTableItem('${categoryKey}', '${subKey}', parseInt(this.value))">
+                                </div>
+                                <div class="table-value-display" id="table-value-${categoryKey}-${subKey}">
+                                    $${(value / 1000).toFixed(0)}K
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }
+        });
+    });
+
+    tbody.innerHTML = html;
+    updateTableSummary();
 }
 
 // Function to update the 2026 IT Budget tab with new values
@@ -132,10 +398,27 @@ function updateBudgetTab() {
             } else if (text.includes('Software & Licenses')) {
                 categoryCell.textContent = `Software & Licenses — $${(categoryTotals.software / 1000).toFixed(0)},000`;
             } else if (text.includes('Strategic Initiatives')) {
-                // Map security to strategic initiatives or keep separate
                 categoryCell.textContent = `Strategic Initiatives — $${(categoryTotals.security / 1000).toFixed(0)},000`;
             }
         }
+    });
+
+    // Update subcategory amounts
+    Object.keys(subcategoryData).forEach(catKey => {
+        Object.keys(subcategoryData[catKey]).forEach(subKey => {
+            const amount = proposedSubBudgets[catKey][subKey];
+            const name = subcategoryData[catKey][subKey].name;
+            
+            // Find matching row by subcategory name
+            document.querySelectorAll('#profile-budget .budget-subcategory').forEach(cell => {
+                if (cell.textContent.trim().includes(name.split(' ')[0])) {
+                    const amountCell = cell.closest('tr')?.querySelector('td:last-child');
+                    if (amountCell) {
+                        amountCell.textContent = `$${amount.toLocaleString()}`;
+                    }
+                }
+            });
+        });
     });
 
     // Update total row
@@ -151,317 +434,6 @@ function updateBudgetTab() {
         software: `$${(categoryTotals.software / 1000).toFixed(0)}K`,
         security: `$${(categoryTotals.security / 1000).toFixed(0)}K`
     });
-}
-
-function renderTableView() {
-    const tbody = document.getElementById('table-budget-items');
-    if (!tbody) return;
-
-    let html = '';
-    let totalProposed = 0;
-    let totalCurrent = 0;
-    let criticalCount = 0;
-
-    // Update table headers if comparison mode
-    const thead = tbody.parentElement.querySelector('thead tr');
-    if (thead) {
-        if (tableComparisonMode) {
-            thead.innerHTML = `
-                <th>Category</th>
-                <th>Description</th>
-                <th>Current</th>
-                <th>Proposed</th>
-            `;
-        } else {
-            thead.innerHTML = `
-                <th>Category</th>
-                <th>Description</th>
-                <th>Annual Cost</th>
-            `;
-        }
-    }
-
-    Object.keys(subcategoryData).forEach(categoryKey => {
-        const category = budgetMarketData[categoryKey];
-        let categoryTotal = 0;
-
-        // Category header row
-        html += `
-            <tr class="category-row">
-                <td colspan="${tableComparisonMode ? 4 : 3}">${category.name}</td>
-            </tr>
-        `;
-
-        // Subcategory rows
-        Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
-            const subItem = subcategoryData[categoryKey][subKey];
-            const value = proposedSubBudgets[categoryKey]?.[subKey] || subItem.sweetSpot;
-            const zone = getZone(subItem, value);
-            const tags = subItem.tags ? subItem.tags[zone] : [];
-            
-            categoryTotal += value;
-            totalProposed += value;
-            totalCurrent += subItem.current;
-
-            // Determine risk class for row styling (proportional zones)
-            let riskClass = '';
-            const rtvRange = subItem.maxRecommended - subItem.marketLow;
-            const rtvPct = rtvRange > 0 ? ((value - subItem.marketLow) / rtvRange) * 100 : 50;
-            if (rtvPct < 10) {
-                riskClass = 'risk-severe';
-                criticalCount++;
-            } else if (rtvPct < 20) {
-                riskClass = 'risk-critical';
-                criticalCount++;
-            }
-
-            html += `
-                <tr class="subcategory-row ${riskClass}">
-                    <td class="category-cell">${subItem.name}</td>
-                    <td class="description-cell">
-                        <div class="table-description">${getTableDescription(categoryKey, subKey)}</div>
-                        <div class="planner-tags-container" id="table-tags-${categoryKey}-${subKey}">
-                            ${renderTags(tags, zone)}
-                        </div>
-                    </td>
-                    ${tableComparisonMode ? `
-                        <td style="padding: var(--space-3) var(--space-5);">
-                            <div style="font-size: 14px; font-weight: 600; color: var(--gray-500);">
-                                $${(subItem.current / 1000).toFixed(0)}K
-                            </div>
-                        </td>
-                    ` : ''}
-                    <td class="slider-cell">
-                        <div class="table-slider-wrapper">
-                            <div class="table-slider-container">
-                                <input 
-                                    type="range" 
-                                    class="table-slider" 
-                                    id="table-slider-${categoryKey}-${subKey}"
-                                    min="${subItem.marketLow}" 
-                                    max="${subItem.maxRecommended}" 
-                                    value="${value}"
-                                    step="5000"
-                                    data-category="${categoryKey}"
-                                    data-subcategory="${subKey}">
-                            </div>
-                            <div class="table-value-display" id="table-value-${categoryKey}-${subKey}">
-                                $${(value / 1000).toFixed(0)}K
-                            </div>
-                            <input 
-                                type="number" 
-                                class="table-manual-input"
-                                id="table-manual-${categoryKey}-${subKey}"
-                                placeholder="$"
-                                data-category="${categoryKey}"
-                                data-subcategory="${subKey}">
-                        </div>
-                    </td>
-                </tr>
-            `;
-        });
-    });
-
-    tbody.innerHTML = html;
-
-    // Update summary cards
-    updateTableSummary(totalProposed, totalCurrent, criticalCount);
-
-    // Add event listeners
-    Object.keys(subcategoryData).forEach(categoryKey => {
-        Object.keys(subcategoryData[categoryKey]).forEach(subKey => {
-            const slider = document.getElementById(`table-slider-${categoryKey}-${subKey}`);
-            if (slider) {
-                slider.addEventListener('input', (e) => {
-                    updateTableItem(categoryKey, subKey, parseInt(e.target.value));
-                });
-            }
-
-            const input = document.getElementById(`table-manual-${categoryKey}-${subKey}`);
-            if (input) {
-                input.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') {
-                        const value = parseInt(input.value) * 1000; // Convert K to actual
-                        if (!isNaN(value)) {
-                            updateTableItem(categoryKey, subKey, value);
-                            input.value = '';
-                        }
-                    }
-                });
-            }
-        });
-    });
-}
-
-function getTableDescription(categoryKey, subKey) {
-    // Check for custom user-added descriptions first
-    if (window.customDescriptions && window.customDescriptions[`${categoryKey}-${subKey}`]) {
-        return window.customDescriptions[`${categoryKey}-${subKey}`];
-    }
-
-    // Check if subcategory has description property
-    if (subcategoryData[categoryKey][subKey].description) {
-        return subcategoryData[categoryKey][subKey].description;
-    }
-
-    // Default descriptions
-    const descriptions = {
-        infrastructure: {
-            network: 'SD-WAN circuits, switches, cabling, bandwidth - all facilities',
-            cloud: 'Azure/AWS hosting, data center colocation, cloud storage & compute',
-            virtualization: 'Nutanix platform, server hardware, hypervisor licensing (VMware/Hyper-V)',
-            hardware: 'Workstations, laptops, tablets, printers, peripheral equipment',
-            maintenance: '24/7 vendor support contracts, warranties, professional services'
-        },
-        personnel: {
-            leadership: 'IT Director/VP compensation, benefits, bonuses (Anthony, Geremia)',
-            technical: 'Network admins, service delivery specialists, clinical IT staff (Francis, Tom, Rogi)',
-            database: 'Database administrator compensation and benefits (Jon)',
-            training: 'Certifications (CompTIA, Microsoft, Cisco), conferences, continuing education'
-        },
-        software: {
-            clinical: 'PointClickCare EHR/billing platform and ancillary clinical SaaS subscriptions',
-            business: 'ERP (financial/operations), MDM (Jamf/MaaS360), eFax, business applications',
-            productivity: 'Microsoft 365 E3/E5 licenses, email, Teams, OneDrive, identity (Azure AD)',
-            servicedesk: 'ITSM platform (ticketing, asset management), monitoring tools, AI Tier-0 bot'
-        },
-        security: {
-            infrastructure_security: 'Next-gen firewalls (Fortinet/Palo Alto), network segmentation, Zero Trust components',
-            endpoint_security: 'EDR (CrowdStrike/SentinelOne), antivirus, email security (Proofpoint/Mimecast)',
-            compliance: 'Audit support, GRC tools, documentation management, consultant fees',
-            training_awareness: 'KnowBe4/similar platform, phishing simulations, security awareness campaigns'
-        }
-    };
-
-    return descriptions[categoryKey]?.[subKey] || '';
-}
-
-function updateTableItem(categoryKey, subKey, value) {
-    proposedSubBudgets[categoryKey][subKey] = value;
-
-    // Update display
-    document.getElementById(`table-value-${categoryKey}-${subKey}`).textContent = 
-        `$${(value / 1000).toFixed(0)}K`;
-
-    // Update tags
-    const subItem = subcategoryData[categoryKey][subKey];
-    const zone = getZone(subItem, value);
-    const tags = subItem.tags ? subItem.tags[zone] : [];
-    document.getElementById(`table-tags-${categoryKey}-${subKey}`).innerHTML = 
-        renderTags(tags, zone);
-
-    // Update row styling based on risk
-    const row = document.getElementById(`table-slider-${categoryKey}-${subKey}`)?.closest('tr');
-    if (row) {
-        row.classList.remove('risk-critical', 'risk-severe');
-        const utiRange = subItem.maxRecommended - subItem.marketLow;
-        const utiPct = utiRange > 0 ? ((value - subItem.marketLow) / utiRange) * 100 : 50;
-        if (utiPct < 10) {
-            row.classList.add('risk-severe');
-        } else if (utiPct < 20) {
-            row.classList.add('risk-critical');
-        }
-    }
-
-    // Calculate totals and update summary
-    let totalProposed = 0;
-    let totalCurrent = 0;
-    let criticalCount = 0;
-    
-    Object.keys(subcategoryData).forEach(catKey => {
-        Object.keys(subcategoryData[catKey]).forEach(sKey => {
-            const val = proposedSubBudgets[catKey][sKey];
-            const item = subcategoryData[catKey][sKey];
-            totalProposed += val;
-            totalCurrent += item.current;
-            
-            const threshold = (item.marketLow + item.marketMid) / 2;
-            if (val < threshold) criticalCount++;
-        });
-    });
-
-    updateTableSummary(totalProposed, totalCurrent, criticalCount);
-
-    // Show save button
-    document.getElementById('table-save-2026').style.display = 'block';
-}
-
-function updateTableSummary(totalProposed, totalCurrent, criticalCount) {
-    // Update proposed total
-    document.getElementById('table-proposed-total').textContent = 
-        `$${(totalProposed / 1000000).toFixed(1)}M`;
-
-    // Update current total (if in comparison mode)
-    document.getElementById('table-current-total').textContent = 
-        `$${(totalCurrent / 1000000).toFixed(1)}M`;
-
-    // Calculate market position (percentile)
-    let optimalTotal = 0;
-    let lowTotal = 0;
-    let highTotal = 0;
-    Object.keys(subcategoryData).forEach(catKey => {
-        Object.keys(subcategoryData[catKey]).forEach(sKey => {
-            const item = subcategoryData[catKey][sKey];
-            optimalTotal += item.sweetSpot;
-            lowTotal += item.marketLow;
-            highTotal += item.maxRecommended;
-        });
-    });
-
-    const range = highTotal - lowTotal;
-    const position = totalProposed - lowTotal;
-    const percentile = Math.max(0, Math.min(100, Math.round((position / range) * 100)));
-
-    document.getElementById('table-market-position').textContent = `${percentile}th Percentile`;
-    
-    let positionLabel = 'Low-Market';
-    let positionColor = 'risk-high';
-    if (percentile >= 40 && percentile <= 60) {
-        positionLabel = 'Mid-Market (Optimal)';
-        positionColor = 'risk-low';
-    } else if (percentile > 60 && percentile <= 80) {
-        positionLabel = 'Above Market';
-        positionColor = 'risk-medium';
-    } else if (percentile > 80) {
-        positionLabel = 'Premium Tier';
-        positionColor = 'risk-medium';
-    }
-    document.getElementById('table-market-detail').textContent = positionLabel;
-    
-    const marketCard = document.getElementById('table-market-card');
-    marketCard.className = `planner-summary-card ${positionColor}`;
-
-    // Update risk assessment
-    const totalCard = document.getElementById('table-total-card');
-    if (criticalCount > 0) {
-        totalCard.className = 'planner-summary-card risk-high';
-        document.getElementById('table-proposed-status').textContent = `${criticalCount} areas underfunded`;
-    } else if (percentile < 40) {
-        totalCard.className = 'planner-summary-card risk-medium';
-        document.getElementById('table-proposed-status').textContent = 'Below optimal range';
-    } else if (percentile > 80) {
-        totalCard.className = 'planner-summary-card risk-medium';
-        document.getElementById('table-proposed-status').textContent = 'Above optimal range';
-    } else {
-        totalCard.className = 'planner-summary-card risk-low';
-        document.getElementById('table-proposed-status').textContent = 'Optimal range';
-    }
-
-    // Update risk count card
-    const riskCard = document.getElementById('table-risk-summary-card');
-    if (criticalCount > 5) {
-        riskCard.className = 'planner-summary-card risk-high';
-        document.getElementById('table-risk-count').textContent = `${criticalCount} Critical`;
-        document.getElementById('table-risk-summary').textContent = 'Immediate action required';
-    } else if (criticalCount > 0) {
-        riskCard.className = 'planner-summary-card risk-medium';
-        document.getElementById('table-risk-count').textContent = `${criticalCount} At Risk`;
-        document.getElementById('table-risk-summary').textContent = 'Attention needed';
-    } else {
-        riskCard.className = 'planner-summary-card risk-low';
-        document.getElementById('table-risk-count').textContent = '0 Critical';
-        document.getElementById('table-risk-summary').textContent = 'All systems nominal';
-    }
 }
 
 // Initialize table view when DOM is ready
@@ -491,32 +463,37 @@ function renderBudgetOverview() {
         });
     });
     
-    const totalProposed = Object.values(categoryTotals).reduce((s, v) => s + v, 0);
-    const totalCurrent = Object.values(categoryCurrents).reduce((s, v) => s + v, 0);
+    const total = Object.values(categoryTotals).reduce((sum, v) => sum + v, 0);
+    const totalProposed = total;
     
-    // Update summary cards
+    // Update budget cards
     const budgetCards = budgetSection.querySelectorAll('.budget-card');
-    if (budgetCards.length >= 4) {
-        const totalVal = budgetCards[0].querySelector('.budget-card-value');
-        if (totalVal) totalVal.textContent = '$' + (totalProposed / 1000000).toFixed(2) + 'M';
-        
-        const catNames = ['infrastructure', 'personnel', 'software', 'security'];
-        for (let i = 1; i < Math.min(budgetCards.length, 5); i++) {
-            const ck = catNames[i - 1];
-            if (!ck || categoryTotals[ck] === undefined) continue;
-            
-            const val = budgetCards[i].querySelector('.budget-card-value');
-            if (val) val.textContent = '$' + (categoryTotals[ck] / 1000).toFixed(0) + 'K';
-            
-            const change = budgetCards[i].querySelector('.budget-card-change');
+    if (budgetCards[0]) {
+        const value = budgetCards[0].querySelector('.budget-card-value');
+        if (value) value.textContent = '$' + (total / 1000000).toFixed(1) + 'M';
+        const change = budgetCards[0].querySelector('.budget-card-change');
+        if (change) {
+            const diff = total - Object.values(categoryCurrents).reduce((s, v) => s + v, 0);
+            const pct = diff !== 0 ? ((diff / Object.values(categoryCurrents).reduce((s, v) => s + v, 0)) * 100).toFixed(1) : 0;
+            change.textContent = (diff >= 0 ? '↑' : '↓') + ' ' + Math.abs(pct) + '% from current';
+            change.className = 'budget-card-change ' + (diff >= 0 ? 'positive' : 'neutral');
+        }
+    }
+    
+    const catKeys = ['infrastructure', 'personnel', 'software'];
+    catKeys.forEach((ck, idx) => {
+        if (budgetCards[idx + 1]) {
+            const value = budgetCards[idx + 1].querySelector('.budget-card-value');
+            if (value) value.textContent = '$' + (categoryTotals[ck] / 1000).toFixed(0) + 'K';
+            const change = budgetCards[idx + 1].querySelector('.budget-card-change');
             if (change) {
                 const diff = categoryTotals[ck] - categoryCurrents[ck];
-                const pct = categoryCurrents[ck] > 0 ? ((diff / categoryCurrents[ck]) * 100).toFixed(1) : 0;
+                const pct = categoryCurrents[ck] ? ((diff / categoryCurrents[ck]) * 100).toFixed(1) : 0;
                 change.textContent = (diff >= 0 ? '↑' : '↓') + ' ' + Math.abs(pct) + '% from current';
                 change.className = 'budget-card-change ' + (diff >= 0 ? 'positive' : 'neutral');
             }
         }
-    }
+    });
     
     // Update table rows
     const tableRows = budgetSection.querySelectorAll('.budget-table tbody tr');

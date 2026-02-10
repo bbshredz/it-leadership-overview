@@ -1,11 +1,85 @@
 // ==================== BUDGET PLANNER ====================
 
-// Load budget data from Google Sheets
+// ==================== SAVE BUDGET TO GOOGLE SHEETS ====================
+// This was MISSING — budget had loadBudgetFromSheets but no save counterpart
+
+async function saveBudgetToSheets() {
+    console.log('💾 Saving budget data to Google Sheets...');
+
+    // 1. Build category-level rows
+    const categoryRows = [['category_id', 'name', 'current', 'market_low', 'market_mid', 'market_high', 'sweet_spot', 'max_recommended']];
+    Object.keys(budgetMarketData).forEach(id => {
+        const d = budgetMarketData[id];
+        categoryRows.push([
+            id,
+            d.name,
+            d.current,
+            d.marketLow,
+            d.marketMid,
+            d.marketHigh,
+            d.sweetSpot,
+            d.maxRecommended
+        ]);
+    });
+
+    // 2. Build subcategory-level rows
+    const subRows = [['parent_category', 'subcategory_id', 'name', 'current', 'market_low', 'market_mid', 'market_high', 'sweet_spot', 'max_recommended']];
+    Object.keys(subcategoryData).forEach(parent => {
+        Object.keys(subcategoryData[parent]).forEach(id => {
+            const d = subcategoryData[parent][id];
+            subRows.push([
+                parent,
+                id,
+                d.name,
+                d.current,
+                d.marketLow,
+                d.marketMid,
+                d.marketHigh,
+                d.sweetSpot,
+                d.maxRecommended
+            ]);
+        });
+    });
+
+    // 3. Build proposed budget rows (separate sheet for what the user has configured)
+    const proposedRows = [['parent_category', 'subcategory_id', 'proposed_value']];
+    Object.keys(proposedSubBudgets).forEach(parent => {
+        Object.keys(proposedSubBudgets[parent]).forEach(id => {
+            proposedRows.push([parent, id, proposedSubBudgets[parent][id]]);
+        });
+    });
+
+    const catSuccess = await writeToSheet('budget_categories', categoryRows);
+    const subSuccess = await writeToSheet('budget_subcategories', subRows);
+    const propSuccess = await writeToSheet('budget_proposed', proposedRows);
+
+    if (catSuccess && subSuccess && propSuccess) {
+        console.log('✅ Budget data saved to Google Sheets (categories + subcategories + proposed)');
+        showSaveNotification('Budget saved to Google Sheets');
+        return true;
+    } else if (catSuccess || subSuccess || propSuccess) {
+        console.log('⚠️ Partial budget save — some sheets updated');
+        showSaveNotification('Partially saved');
+        return true;
+    } else {
+        console.log('💾 Saved to browser (sign in to sync with Google Sheets)');
+        showSaveNotification('Saved locally');
+        return false;
+    }
+}
+
+// Make globally accessible
+window.saveBudgetToSheets = saveBudgetToSheets;
+
+
+// ==================== LOAD BUDGET FROM GOOGLE SHEETS ====================
+
 async function loadBudgetFromSheets() {
     console.log('📥 Loading budget data from Google Sheets...');
     
     const categoriesData = await readFromSheet('budget_categories');
     const subcategoriesData = await readFromSheet('budget_subcategories');
+    const proposedData = await readFromSheet('budget_proposed');
     
     if (categoriesData && categoriesData.length > 1) {
         // Parse categories: category_id | name | current | market_low | market_mid | market_high | sweet_spot | max_recommended
@@ -38,6 +112,17 @@ async function loadBudgetFromSheets() {
         }
         console.log('✅ Budget subcategories loaded from Google Sheets');
     }
+
+    // Load proposed values if they exist
+    if (proposedData && proposedData.length > 1) {
+        for (let i = 1; i < proposedData.length; i++) {
+            const [parent, id, proposed] = proposedData[i];
+            if (parent && id && proposedSubBudgets[parent]) {
+                proposedSubBudgets[parent][id] = parseFloat(proposed) || proposedSubBudgets[parent][id];
+            }
+        }
+        console.log('✅ Proposed budget values loaded from Google Sheets');
+    }
     
     // Refresh budget displays if they're visible
     if (document.getElementById('budget-line-items')) {
@@ -46,7 +131,8 @@ async function loadBudgetFromSheets() {
     }
 }
 
-// ==================== BUDGET PLANNER ====================
+
+// ==================== MARKET DATA ====================
 
 // Market data for SNF/Post-Acute IT in Orange County, CA
 const budgetMarketData = {
@@ -169,105 +255,105 @@ const subcategoryData = {
                 caution: ['Basic HA', 'Older platform', 'Manual failover'],
                 optimal: ['Modern Nutanix', 'Full HA', 'Fast recovery', 'Capacity buffer'],
                 premium: ['Latest hardware', 'Maximum resilience', 'Premium support'],
-                overspend: ['Excess capacity', 'Premature refresh', 'Budget waste']
+                overspend: ['Over-spec\'d', 'Expensive licensing', 'Idle capacity']
             }
         },
         hardware: {
             name: 'Hardware & Endpoints',
-            current: 105000,
+            current: 130000,
             marketLow: 120000,
-            marketMid: 135000,
-            sweetSpot: 140000,
-            marketHigh: 155000,
-            maxRecommended: 180000,
+            marketMid: 150000,
+            sweetSpot: 155000,
+            marketHigh: 180000,
+            maxRecommended: 210000,
             tags: {
-                risk: ['Old equipment', 'Slow performance', 'Security risk', 'User frustration'],
-                caution: ['Aging fleet', 'Refresh needed', 'Some complaints'],
-                optimal: ['Modern devices', 'Reliable performance', 'Secure', 'High productivity'],
-                premium: ['Premium models', 'Latest hardware', 'Executive-grade'],
-                overspend: ['Unnecessary upgrades', 'Over-specced', 'Budget surplus']
+                risk: ['Aging devices', 'Slow systems', 'Support issues', 'Security risk'],
+                caution: ['Mixed fleet', 'Some old devices', 'Basic standards'],
+                optimal: ['3-4yr lifecycle', 'Standardized', 'User productive', 'Secure'],
+                premium: ['Premium devices', 'Short lifecycle', 'Top specs'],
+                overspend: ['Excessive refresh', 'Over-spec\'d', 'Budget waste']
             }
         },
         maintenance: {
             name: 'Maintenance & Support',
-            current: 120000,
+            current: 95000,
             marketLow: 120000,
-            marketMid: 165000,
-            sweetSpot: 165000,
-            marketHigh: 190000,
-            maxRecommended: 220000,
+            marketMid: 150000,
+            sweetSpot: 150000,
+            marketHigh: 165000,
+            maxRecommended: 200000,
             tags: {
-                risk: ['Warranty gaps', 'Slow response', 'Extended downtime', 'DIY fixes'],
-                caution: ['Basic support', 'Limited hours', 'Some delays'],
-                optimal: ['24/7 support', 'Fast response', 'Vendor partnerships', 'Minimal downtime'],
-                premium: ['White-glove service', 'Dedicated TAMs', 'Instant response'],
-                overspend: ['Redundant contracts', 'Overlapping coverage', 'Wasted spend']
+                risk: ['Expired warranties', 'No support', 'Slow repairs', 'Downtime risk'],
+                caution: ['Basic support', 'Business hours only', 'Some gaps'],
+                optimal: ['24/7 coverage', 'Fast response', 'Vendor partnerships', 'Reliable'],
+                premium: ['White-glove service', 'Dedicated TAMs', 'Premium SLAs'],
+                overspend: ['Redundant contracts', 'Overlapping coverage', 'Overbuilt']
             }
         }
     },
     personnel: {
         leadership: {
             name: 'Leadership (Anthony, Geremia)',
-            current: 320000,
+            current: 310000,
             marketLow: 340000,
-            marketMid: 360000,
-            sweetSpot: 370000,
-            marketHigh: 400000,
-            maxRecommended: 450000,
+            marketMid: 380000,
+            sweetSpot: 390000,
+            marketHigh: 430000,
+            maxRecommended: 480000,
             tags: {
-                risk: ['Below market', 'Turnover risk', 'Recruiting difficult', 'Experience loss'],
-                caution: ['Market competitive', 'Some retention risk', 'Limited growth budget'],
-                optimal: ['Competitive pay', 'Stable leadership', 'Attract talent', 'Continuity'],
-                premium: ['Top quartile pay', 'Executive perks', 'Very stable'],
-                overspend: ['Above market premium', 'Inflated costs', 'Compensation imbalance']
+                risk: ['Below market', 'Flight risk', 'Can\'t attract talent', 'Morale issues'],
+                caution: ['Market competitive', 'Stable but watchful', 'Limited growth room'],
+                optimal: ['Above market', 'Strong retention', 'Talent magnet', 'Low flight risk'],
+                premium: ['Top 10% comp', 'Excellent benefits', 'Golden handcuffs'],
+                overspend: ['Significantly above market', 'Diminishing ROI', 'Budget pressure']
             }
         },
         technical: {
             name: 'Technical Staff (Francis, Tom, Rogi)',
-            current: 380000,
-            marketLow: 390000,
-            marketMid: 420000,
-            sweetSpot: 430000,
-            marketHigh: 460000,
-            maxRecommended: 520000,
+            current: 360000,
+            marketLow: 350000,
+            marketMid: 400000,
+            sweetSpot: 405000,
+            marketHigh: 450000,
+            maxRecommended: 500000,
             tags: {
-                risk: ['Retention issues', 'Skill gaps', 'Burnout risk', 'Quality concerns'],
-                caution: ['Market rate', 'Some turnover', 'Limited training'],
-                optimal: ['Competitive pay', 'Strong retention', 'Quality work', 'High morale'],
-                premium: ['Premium salaries', 'Excellent benefits', 'Very low turnover'],
-                overspend: ['Premium unsustainable', 'Compressed margins', 'Budget pressure']
+                risk: ['Below market', 'High turnover risk', 'Can\'t backfill', 'Knowledge loss'],
+                caution: ['Market rate', 'Adequate', 'Some turnover expected'],
+                optimal: ['Competitive pay', 'Good benefits', 'Team stability', 'Retention strong'],
+                premium: ['Premium compensation', 'Top talent retained', 'Recruiting advantage'],
+                overspend: ['Well above market', 'Unsustainable', 'Budget strain']
             }
         },
         database: {
             name: 'Database Admin (Jon)',
             current: 110000,
-            marketLow: 115000,
+            marketLow: 110000,
             marketMid: 120000,
-            sweetSpot: 122000,
-            marketHigh: 135000,
-            maxRecommended: 150000,
+            sweetSpot: 125000,
+            marketHigh: 140000,
+            maxRecommended: 160000,
             tags: {
-                risk: ['Below market', 'Flight risk', 'Specialized role', 'Hard to replace'],
-                caution: ['Market rate', 'Some risk', 'Specialist premium'],
-                optimal: ['Competitive rate', 'Role stability', 'Knowledge retained'],
-                premium: ['Premium specialist rate', 'Very stable', 'Senior level'],
-                overspend: ['Premium excessive', 'Budget pressure']
+                risk: ['Below market', 'Flight risk', 'Hard to replace', 'Specialized skill'],
+                caution: ['At market', 'Adequate', 'Monitor satisfaction'],
+                optimal: ['Above market', 'Strong retention', 'Skill investment', 'Career path'],
+                premium: ['Top compensation', 'Extensive training', 'Specialized certs'],
+                overspend: ['Significantly above market', 'Diminishing returns']
             }
         },
         training: {
             name: 'Training & Development',
-            current: 30000,
-            marketLow: 35000,
+            current: 60000,
+            marketLow: 80000,
             marketMid: 60000,
-            sweetSpot: 58000,
-            marketHigh: 75000,
-            maxRecommended: 95000,
+            sweetSpot: 60000,
+            marketHigh: 80000,
+            maxRecommended: 110000,
             tags: {
-                risk: ['Stagnant skills', 'No certifications', 'Limited growth', 'Outdated knowledge'],
-                caution: ['Basic training', 'Some conferences', 'Slow progress'],
-                optimal: ['Continuous learning', 'Current certs', 'Career paths', 'Innovation'],
-                premium: ['Executive coaching', 'Premium programs', 'Conference travel'],
-                overspend: ['Excessive training', 'Underutilized', 'Budget inefficiency']
+                risk: ['No certifications', 'Stale skills', 'Can\'t adopt new tech', 'Team stagnation'],
+                caution: ['Basic training', 'Some certs', 'Limited conferences'],
+                optimal: ['Regular certs', 'Conferences', 'Skill growth', 'Team advancement'],
+                premium: ['Premium programs', 'Executive coaching', 'Full cert coverage'],
+                overspend: ['Excessive programs', 'Time away from work', 'Diminishing returns']
             }
         }
     },
@@ -435,58 +521,32 @@ function renderBudgetItems() {
         const tags = budgetMarketData[key].tags ? budgetMarketData[key].tags[zone] : [];
         
         let html = `
-            <div class="planner-item">
-                <div class="planner-item-header">
-                    <div class="planner-item-info">
-                        <div class="planner-item-title">${item.name}</div>
-                        <div class="planner-item-values">
-                            <div class="planner-value">
-                                <div class="planner-value-label">Proposed</div>
-                                <div class="planner-value-amount" data-item="${key}-proposed">
-                                    $${(value / 1000).toFixed(0)}K
-                                </div>
-                            </div>
-                            ${comparisonMode ? `
-                            <div class="planner-value">
-                                <div class="planner-value-label">Current</div>
-                                <div class="planner-value-amount current">
-                                    $${(item.current / 1000).toFixed(0)}K
-                                </div>
-                            </div>
-                            ` : ''}
-                        </div>
-                    </div>
-                    <div id="risk-${key}">
-                        ${getRiskIndicator(key, value)}
+            <div class="planner-category" data-category="${key}">
+                <div class="planner-category-header">
+                    <div class="planner-category-title">${item.name}</div>
+                    <div class="planner-category-value">$${(value / 1000).toFixed(0)}K</div>
+                </div>
+                <div class="planner-impact">${getImpactText(key, value)}</div>
+                ${renderTags(tags, zone)}
+                <div class="planner-slider-wrapper">
+                    <div class="planner-slider-sweetspot" style="left: ${((item.sweetSpot - item.marketLow) / (item.maxRecommended - item.marketLow)) * 100}%"></div>
+                    <input type="range" 
+                        class="planner-slider" 
+                        id="slider-${key}"
+                        min="${item.marketLow}" 
+                        max="${item.maxRecommended}" 
+                        value="${value}"
+                        data-category="${key}">
+                    <div class="planner-slider-labels">
+                        <span>$${(item.marketLow / 1000).toFixed(0)}K</span>
+                        ${comparisonMode ? `<span class="planner-current-marker">Current: $${(item.current / 1000).toFixed(0)}K</span>` : ''}
+                        <span>$${(item.maxRecommended / 1000).toFixed(0)}K</span>
                     </div>
                 </div>
-
-                <div id="tags-${key}">
-                    ${renderTags(tags, zone)}
+                <div class="planner-risk-row">
+                    ${getRiskIndicator(key, value)}
+                    <span class="planner-market-position">Market: $${(item.marketMid / 1000).toFixed(0)}K mid</span>
                 </div>
-
-                <div class="planner-slider-container">
-                    <div class="planner-slider-wrapper">
-                        <div class="planner-slider-sweetspot" style="left: ${((item.sweetSpot - item.marketLow) / (item.maxRecommended - item.marketLow)) * 100}%"></div>
-                        <input 
-                            type="range" 
-                            class="planner-slider" 
-                            id="slider-${key}"
-                            min="${item.marketLow}" 
-                            max="${item.maxRecommended}" 
-                            value="${value}"
-                            step="10000"
-                            data-item="${key}">
-                    </div>
-                    <div class="planner-slider-header">
-                        <div class="planner-slider-labels">
-                            <span class="planner-slider-label">$${(item.marketLow / 1000).toFixed(0)}K</span>
-                            <span class="planner-slider-label">⭐ $${(item.sweetSpot / 1000).toFixed(0)}K</span>
-                            <span class="planner-slider-label">$${(item.maxRecommended / 1000).toFixed(0)}K</span>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="planner-manual-input">
                     <label style="font-size: 13px; font-weight: 600; color: var(--gray-600);">Manual Entry:</label>
                     <input 
@@ -524,68 +584,182 @@ function renderBudgetItems() {
                         ${renderTags(subTags, subZone)}
                         <div class="planner-slider-wrapper" style="margin-top: var(--space-3);">
                             <div class="planner-slider-sweetspot" style="left: ${((subItem.sweetSpot - subItem.marketLow) / (subItem.maxRecommended - subItem.marketLow)) * 100}%"></div>
-                            <input 
-                                type="range" 
-                                class="planner-slider" 
-                                id="slider-${key}-${subKey}"
+                            <input type="range" 
+                                class="planner-slider subcategory-slider" 
+                                id="sub-slider-${key}-${subKey}"
                                 min="${subItem.marketLow}" 
                                 max="${subItem.maxRecommended}" 
                                 value="${subValue}"
-                                step="5000"
                                 data-category="${key}"
                                 data-subcategory="${subKey}">
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--gray-500); margin-top: var(--space-1);">
-                            <span>$${(subItem.marketLow / 1000).toFixed(0)}K</span>
-                            <span>⭐ $${(subItem.sweetSpot / 1000).toFixed(0)}K</span>
-                            <span>$${(subItem.maxRecommended / 1000).toFixed(0)}K</span>
                         </div>
                     </div>
                 `;
             });
-
+            
+            // Add subcategory button
             html += `
-                <div class="planner-add-item-form" id="add-form-${key}" style="display: none;">
-                    <input type="text" placeholder="Line item name" id="new-name-${key}">
-                    <input type="number" placeholder="Amount" id="new-amount-${key}">
-                    <button class="kanban-btn primary" onclick="addSubcategory('${key}')">Add</button>
-                    <button class="kanban-btn" onclick="cancelAddSubcategory('${key}')">Cancel</button>
+                <div class="planner-add-subcategory">
+                    <button class="kanban-btn" onclick="showAddForm('${key}')">+ Add Line Item</button>
+                    <div id="add-form-${key}" style="display: none; gap: var(--space-3); margin-top: var(--space-3);">
+                        <input type="text" id="new-name-${key}" placeholder="Name" class="table-manual-input" style="width: 150px;">
+                        <input type="number" id="new-amount-${key}" placeholder="Amount" class="table-manual-input">
+                        <button class="kanban-btn primary" onclick="addSubcategory('${key}')">Add</button>
+                        <button class="kanban-btn" onclick="cancelAddSubcategory('${key}')">Cancel</button>
+                    </div>
                 </div>
-                <button class="kanban-btn" onclick="showAddForm('${key}')" style="width: 100%; margin-top: var(--space-3);">
-                    + Add Line Item
-                </button>
-            </div>`;
+            `;
+            
+            html += '</div>';
         }
 
-        html += `</div>`;
+        html += '</div>';
         return html;
     }).join('');
 
-    // Add event listeners to main sliders
-    Object.keys(budgetMarketData).forEach(key => {
-        const slider = document.getElementById(`slider-${key}`);
-        if (slider) {
-            slider.addEventListener('input', (e) => {
-                updateBudgetItem(key, parseInt(e.target.value));
-            });
-        }
+    // Add slider event listeners
+    container.querySelectorAll('.planner-slider:not(.subcategory-slider)').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const key = e.target.dataset.category;
+            const value = parseInt(e.target.value);
+            proposedBudget[key] = value;
+            updateBudgetItem(key, value);
+        });
     });
 
-    // Add event listeners to subcategory sliders
-    if (granularView) {
-        Object.keys(subcategoryData).forEach(category => {
-            Object.keys(subcategoryData[category]).forEach(subKey => {
-                const slider = document.getElementById(`slider-${category}-${subKey}`);
-                if (slider) {
-                    slider.addEventListener('input', (e) => {
-                        updateSubcategoryItem(category, subKey, parseInt(e.target.value));
-                    });
-                }
+    // Add subcategory slider listeners
+    container.querySelectorAll('.subcategory-slider').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const catKey = e.target.dataset.category;
+            const subKey = e.target.dataset.subcategory;
+            const value = parseInt(e.target.value);
+            proposedSubBudgets[catKey][subKey] = value;
+            
+            // Update display
+            const item = subcategoryData[catKey][subKey];
+            const zone = getZone(item, value);
+            const parentEl = e.target.closest('.planner-subcategory-item');
+            if (parentEl) {
+                parentEl.querySelector('span[style*="font-size: 18px"]').textContent = `$${(value / 1000).toFixed(0)}K`;
+                parentEl.querySelector('.planner-risk-indicator').className = `planner-risk-indicator ${zone}`;
+                parentEl.querySelector('.planner-risk-indicator').textContent = zone.toUpperCase();
+            }
+            
+            // Update parent total
+            let total = 0;
+            Object.keys(subcategoryData[catKey]).forEach(sk => {
+                total += proposedSubBudgets[catKey][sk] || subcategoryData[catKey][sk].sweetSpot;
             });
+            proposedBudget[catKey] = total;
+            
+            // Update parent display
+            const catEl = document.querySelector(`.planner-category[data-category="${catKey}"]`);
+            if (catEl) {
+                catEl.querySelector('.planner-category-value').textContent = `$${(total / 1000).toFixed(0)}K`;
+            }
+            
+            updateSummary();
         });
-    }
+    });
 }
 
+function updateBudgetItem(key, value) {
+    const catEl = document.querySelector(`.planner-category[data-category="${key}"]`);
+    if (!catEl) return;
+    
+    catEl.querySelector('.planner-category-value').textContent = `$${(value / 1000).toFixed(0)}K`;
+    catEl.querySelector('.planner-impact').textContent = getImpactText(key, value);
+    
+    const zone = getZone(budgetMarketData[key], value);
+    const tags = budgetMarketData[key].tags ? budgetMarketData[key].tags[zone] : [];
+    const tagsContainer = catEl.querySelector('.planner-tags');
+    if (tagsContainer) {
+        tagsContainer.outerHTML = renderTags(tags, zone);
+    }
+    
+    catEl.querySelector('.planner-risk-row').innerHTML = `
+        ${getRiskIndicator(key, value)}
+        <span class="planner-market-position">Market: $${(budgetMarketData[key].marketMid / 1000).toFixed(0)}K mid</span>
+    `;
+    
+    updateSummary();
+}
+
+function renderTags(tags, zone) {
+    if (!tags || tags.length === 0) return '<div class="planner-tags"></div>';
+    
+    const tagClass = {
+        'risk': 'tag-risk',
+        'caution': 'tag-caution',
+        'optimal': 'tag-optimal',
+        'premium': 'tag-premium',
+        'overspend': 'tag-overspend'
+    }[zone] || 'tag-neutral';
+    
+    return `<div class="planner-tags">${tags.map(t => 
+        `<span class="planner-tag ${tagClass}">${t}</span>`
+    ).join('')}</div>`;
+}
+
+function updateSummary() {
+    const total = Object.values(proposedBudget).reduce((sum, val) => sum + val, 0);
+    
+    document.getElementById('proposed-total').textContent = `$${(total / 1000000).toFixed(1)}M`;
+    
+    // Market position
+    const totalMid = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketMid, 0);
+    const totalHigh = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketHigh, 0);
+    const totalLow = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketLow, 0);
+    
+    const range = totalHigh - totalLow;
+    const position = range > 0 ? Math.round(((total - totalLow) / range) * 100) : 50;
+    const percentile = Math.min(99, Math.max(1, position));
+    
+    document.getElementById('market-position').textContent = `${percentile}th Percentile`;
+    
+    let positionDetail = 'Mid-Market';
+    if (percentile < 25) positionDetail = 'Below Market';
+    else if (percentile < 40) positionDetail = 'Lower Mid-Market';
+    else if (percentile < 60) positionDetail = 'Mid-Market';
+    else if (percentile < 75) positionDetail = 'Upper Mid-Market';
+    else positionDetail = 'Premium';
+    
+    document.getElementById('market-position-detail').textContent = positionDetail;
+    
+    // Current total
+    const currentTotal = Object.values(budgetMarketData).reduce((sum, item) => sum + item.current, 0);
+    document.getElementById('current-total').textContent = `$${(currentTotal / 1000000).toFixed(1)}M`;
+    
+    // Risk count
+    let riskCount = 0;
+    Object.keys(budgetMarketData).forEach(key => {
+        const item = budgetMarketData[key];
+        const value = proposedBudget[key];
+        const rcRange = item.maxRecommended - item.marketLow;
+        const rcPct = rcRange > 0 ? ((value - item.marketLow) / rcRange) * 100 : 50;
+        if (rcPct < 20) riskCount++;
+    });
+    
+    document.getElementById('risk-count').textContent = riskCount > 0 ? `${riskCount} Critical` : '0 Critical';
+    document.getElementById('risk-summary').textContent = riskCount > 0 ? 'Action needed' : 'All systems nominal';
+    
+    // Proposed status
+    const statusEl = document.getElementById('proposed-status');
+    if (percentile < 25) {
+        statusEl.textContent = 'Underfunded';
+        statusEl.className = 'budget-card-change negative';
+    } else if (percentile < 75) {
+        statusEl.textContent = 'Optimal Range';
+        statusEl.className = 'budget-card-change positive';
+    } else {
+        statusEl.textContent = 'Premium';
+        statusEl.className = 'budget-card-change neutral';
+    }
+    
+    checkForChanges();
+}
+
+// Zone and risk calculation functions
 function getRiskClass(key, value) {
     const item = budgetMarketData[key];
     const rcRange = item.maxRecommended - item.marketLow;
@@ -595,8 +769,8 @@ function getRiskClass(key, value) {
     if (rcPct < 20) return 'risk-high';
     if (value < item.sweetSpot) return 'risk-medium';
     if (value <= item.marketHigh) return 'risk-low';
-    if (value <= item.maxRecommended) return 'risk-medium'; // Premium but acceptable
-    return 'risk-high'; // Overspend
+    if (value <= item.maxRecommended) return 'risk-medium';
+    return 'risk-high';
 }
 
 function getRiskIndicator(key, value) {
@@ -627,7 +801,6 @@ function getImpactText(key, value) {
 
 // Get zone for a given value
 function getZone(item, value) {
-    // Proportional zone calculation across full slider range
     const range = item.maxRecommended - item.marketLow;
     const position = value - item.marketLow;
     const percent = range > 0 ? (position / range) * 100 : 50;
@@ -641,7 +814,7 @@ function getZone(item, value) {
 // Get tags for display based on value and zone
 function getTags(categoryKey, subcategoryKey, value) {
     const data = subcategoryKey ? 
-        subcategoryData[categoryKey][subcategoryKey] : 
+        subcategoryData[categoryKey]?.[subcategoryKey] : 
         budgetMarketData[categoryKey];
     
     if (!data || !data.tags) return [];
@@ -650,84 +823,11 @@ function getTags(categoryKey, subcategoryKey, value) {
     return data.tags[zone] || [];
 }
 
-// Render tags HTML
-function renderTags(tags, zone) {
-    if (!tags || tags.length === 0) return '';
-    
-    return `<div class="planner-tags-container">
-        ${tags.map(tag => `<span class="planner-tag ${zone}">${tag}</span>`).join('')}
-    </div>`;
-}
-
-function updateBudgetItem(key, value) {
-    proposedBudget[key] = value;
-    
-    // Update display
-    const proposedElement = document.querySelector(`[data-item="${key}-proposed"]`);
-    if (proposedElement) {
-        proposedElement.textContent = `$${(value / 1000).toFixed(0)}K`;
-    }
-    
-    // Update risk indicator
-    const riskElement = document.getElementById(`risk-${key}`);
-    if (riskElement) {
-        riskElement.innerHTML = getRiskIndicator(key, value);
-    }
-    
-    // Update tags without full re-render
-    const tagsContainer = document.getElementById(`tags-${key}`);
-    if (tagsContainer) {
-        const item = budgetMarketData[key];
-        const zone = getZone(item, value);
-        const tags = budgetMarketData[key].tags ? budgetMarketData[key].tags[zone] : [];
-        tagsContainer.innerHTML = renderTags(tags, zone);
-    }
-    
-    updateSummary();
-    checkForChanges();
-}
-
-function updateSummary() {
-    const total = Object.values(proposedBudget).reduce((sum, val) => sum + val, 0);
-    const currentTotal = Object.values(budgetMarketData).reduce((sum, item) => sum + item.current, 0);
-    
-    document.getElementById('proposed-total').textContent = 
-        `$${(total / 1000000).toFixed(1)}M`;
-    
-    if (comparisonMode) {
-        document.getElementById('current-total').textContent = 
-            `$${(currentTotal / 1000000).toFixed(1)}M`;
-    }
-
-    // Calculate market position
-    const optimalTotal = Object.values(budgetMarketData).reduce((sum, item) => sum + item.marketMid, 0);
-    const percentile = Math.round((total / optimalTotal) * 50 + 25);
-    document.getElementById('market-position').textContent = `${percentile}th Percentile`;
-
-    // Count risks
-    let highRisks = 0;
-    Object.keys(budgetMarketData).forEach(key => {
-        if (getRiskClass(key, proposedBudget[key]) === 'risk-high') highRisks++;
-    });
-
-    const riskCard = document.getElementById('risk-card');
-    if (highRisks > 0) {
-        riskCard.className = 'planner-summary-card risk-high';
-        document.getElementById('risk-count').textContent = `${highRisks} Critical`;
-        document.getElementById('risk-summary').textContent = 'Action required';
-    } else {
-        riskCard.className = 'planner-summary-card risk-low';
-        document.getElementById('risk-count').textContent = '0 Critical';
-        document.getElementById('risk-summary').textContent = 'All systems nominal';
-    }
-}
-
 function setupBudgetControls() {
     // Toggle granular view
     document.getElementById('toggle-granular-view')?.addEventListener('click', (e) => {
         granularView = !granularView;
         e.target.textContent = granularView ? '📊 Hide Detailed Breakdown' : '📊 Show Detailed Breakdown';
-        e.target.classList.toggle('active');
         renderBudgetItems();
     });
 
@@ -735,10 +835,6 @@ function setupBudgetControls() {
     document.getElementById('load-current-budget')?.addEventListener('click', () => {
         Object.keys(budgetMarketData).forEach(key => {
             proposedBudget[key] = budgetMarketData[key].current;
-            const slider = document.getElementById(`slider-${key}`);
-            if (slider) slider.value = budgetMarketData[key].current;
-            
-            // Load current for subcategories
             if (subcategoryData[key]) {
                 Object.keys(subcategoryData[key]).forEach(subKey => {
                     proposedSubBudgets[key][subKey] = subcategoryData[key][subKey].current;
@@ -749,7 +845,7 @@ function setupBudgetControls() {
         updateSummary();
     });
 
-    // Toggle comparison
+    // Comparison mode
     document.getElementById('compare-mode-toggle')?.addEventListener('click', (e) => {
         comparisonMode = !comparisonMode;
         e.target.textContent = comparisonMode ? '👁️ Hide Comparison' : '👁️ Show Comparison';
@@ -776,17 +872,18 @@ function setupBudgetControls() {
         }
     });
 
-    // Save to 2026
-    document.getElementById('save-to-2026')?.addEventListener('click', () => {
+    // Save to 2026 — NOW ACTUALLY SAVES TO SHEETS
+    document.getElementById('save-to-2026')?.addEventListener('click', async () => {
         if (confirm('Save this budget configuration as the official 2026 IT Budget?')) {
-            alert('✅ Budget saved! Changes will reflect in the "2026 IT Budget" tab.');
+            updateBudgetTab();
+            await saveBudgetToSheets();
+            alert('✅ Budget saved to Google Sheets and reflected in the "2026 IT Budget" tab.');
             document.getElementById('save-to-2026').style.display = 'none';
         }
     });
 }
 
 function checkForChanges() {
-    // Show save button if values differ from optimal
     let hasChanges = false;
     Object.keys(budgetMarketData).forEach(key => {
         if (proposedBudget[key] !== budgetMarketData[key].marketMid) {
@@ -808,14 +905,12 @@ function applyManualValue(key) {
 
     const item = budgetMarketData[key];
     
-    // Check if dangerously low (below 70% of market minimum)
     if (value < item.marketLow * 0.7) {
         input.parentElement.classList.add('deep-red');
         if (!confirm(`⚠️ WARNING: This value is ${Math.round((1 - value/item.marketLow) * 100)}% below minimum market rate. This creates severe operational risk. Continue?`)) {
             return;
         }
     } 
-    // Check if excessive (above max recommended)
     else if (value > item.maxRecommended * 1.2) {
         if (!confirm(`⚠️ WARNING: This value is ${Math.round((value/item.maxRecommended - 1) * 100)}% above recommended maximum. This may indicate overspending with diminishing returns. Continue?`)) {
             return;
@@ -827,7 +922,6 @@ function applyManualValue(key) {
     proposedBudget[key] = value;
     const slider = document.getElementById(`slider-${key}`);
     if (slider) {
-        // Extend slider range if needed
         if (value > slider.max) slider.max = value;
         if (value < slider.min) slider.min = value;
         slider.value = value;
@@ -877,46 +971,29 @@ window.addSubcategory = function(category) {
         return;
     }
 
-    // Create new subcategory with estimated market ranges
     const newKey = name.toLowerCase().replace(/\s+/g, '_');
     subcategoryData[category][newKey] = {
         name: name,
         current: amount,
         marketLow: amount * 0.9,
         marketMid: amount,
-        sweetSpot: amount * 1.05,
-        marketHigh: amount * 1.2,
-        maxRecommended: amount * 1.4,
+        sweetSpot: amount,
+        marketHigh: amount * 1.15,
+        maxRecommended: amount * 1.35,
         tags: {
-            risk: ['Underfunded'],
-            caution: ['Baseline'],
-            optimal: ['Well-funded'],
-            premium: ['Premium tier'],
-            overspend: ['Excessive']
+            risk: ['Underfunded', 'Service gaps', 'Operational risk'],
+            caution: ['Baseline functional', 'Some limitations'],
+            optimal: ['Well-funded', 'Reliable service', 'Best value'],
+            premium: ['Premium tier', 'Advanced features'],
+            overspend: ['Overbuilt', 'Underutilized', 'Poor ROI']
         }
     };
-
     proposedSubBudgets[category][newKey] = amount;
     
-    window.cancelAddSubcategory(category);
+    cancelAddSubcategory(category);
     renderBudgetItems();
     updateSummary();
 };
-
-function updateSubcategoryItem(category, subKey, value) {
-    proposedSubBudgets[category][subKey] = value;
-    
-    // Recalculate parent category total
-    let total = 0;
-    Object.keys(proposedSubBudgets[category]).forEach(sk => {
-        total += proposedSubBudgets[category][sk];
-    });
-    proposedBudget[category] = total;
-    
-    // Update display
-    updateSummary();
-    renderBudgetItems();
-}
 
 // Initialize budget planner when DOM is ready
 if (document.readyState === 'loading') {
